@@ -153,7 +153,7 @@ def _find_default_qemu_paths(options_qemu=None):
     return [qemu_bin_path, qemu_img_path, qemu_io_path]
 
 SUPPORTED_TEST_TYPES = [
-    'qemu', 'libvirt', 'libguestfs', 'openvswitch', 'v2v', 'lvsb']
+    'qemu', 'libvirt', 'libguestfs', 'openvswitch', 'v2v', 'lvsb', 'esx']
 
 SUPPORTED_IMAGE_TYPES = ['raw', 'qcow2', 'qed', 'vmdk']
 
@@ -331,6 +331,16 @@ class VirtTestRunParser(optparse.OptionParser):
                            help=("Remove the guest from libvirt. This will not "
                                  "delete the guest's disk file."))
         self.add_option_group(libvirt)
+
+#	esx = optparse.OptionGroup(self, 'Options specific to the esx test')
+#        esx.add_option("--image-type", action="store", dest="image_type",
+#                        default="qcow2",
+#                        help=("Image format type to use "
+#                              "(any valid qemu format). "
+#                              "If -c is provided, this will be ignored. "
+#                              "Default: %default"))
+#        self.add_option_group(esx)
+
 
 
 DEFAULT_MACHINE_TYPE = "i440fx"
@@ -724,6 +734,9 @@ class VirtTestApp(object):
             self._process_lvsb_specific_options()
         elif self.options.type == 'openvswitch':
             self._process_qemu_specific_options()
+	elif self.options.type == 'esx':
+            self._process_qemu_specific_options()
+
         # List and tests have to be the last things to be processed
         self._process_list()
         self._process_tests()

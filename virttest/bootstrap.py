@@ -20,9 +20,11 @@ recommended_programs = {'qemu': [('qemu-kvm', 'kvm'), ('qemu-img',),
                         'openvswitch': [],
                         'lvsb': [('semanage',), ('getfattr',), ('restorecon',)],
                         'v2v': [],
+			'esx':[('qemu-kvm', 'kvm'), ('qemu-img',), ('qemu-io')],
                         'libguestfs': [('perl',)]}
 
 mandatory_programs = {'qemu': basic_program_requirements + ['gcc'],
+		      'esx': basic_program_requirements + ['gcc'],
                       'libvirt': basic_program_requirements,
                       'openvswitch': basic_program_requirements,
                       'lvsb': ['virt-sandbox', 'virt-sandbox-service', 'virsh'],
@@ -30,6 +32,7 @@ mandatory_programs = {'qemu': basic_program_requirements + ['gcc'],
                       'libguestfs': basic_program_requirements}
 
 mandatory_headers = {'qemu': ['Python.h', 'types.h', 'socket.h', 'unistd.h'],
+			'esx':['Python.h', 'types.h', 'socket.h', 'unistd.h'],
                      'libvirt': [],
                      'openvswitch': [],
                      'v2v': [],
@@ -37,6 +40,7 @@ mandatory_headers = {'qemu': ['Python.h', 'types.h', 'socket.h', 'unistd.h'],
                      'libguestfs': []}
 
 first_subtest = {'qemu': ['unattended_install', 'steps'],
+		'esx': ['unattended_install', 'steps'],
                  'libvirt': ['unattended_install'],
                  'openvswitch': ['unattended_install'],
                  'v2v': ['unattended_install'],
@@ -44,6 +48,7 @@ first_subtest = {'qemu': ['unattended_install', 'steps'],
                  'lvsb': []}
 
 last_subtest = {'qemu': ['shutdown'],
+		'esx' : ['shutdown'],
                 'libvirt': ['shutdown', 'remove_guest'],
                 'openvswitch': ['shutdown'],
                 'v2v': ['shutdown'],

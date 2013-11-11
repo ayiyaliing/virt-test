@@ -539,6 +539,9 @@ class BaseVM(object):
         if vm_type == 'qemu':
             import qemu_vm
             return qemu_vm.VM
+	if vm_type == 'esx':
+            import qemu_vm
+            return qemu_vm.VM
         if vm_type == 'libvirt':
             import libvirt_vm
             return libvirt_vm.VM
