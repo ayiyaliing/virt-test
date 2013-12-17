@@ -13,7 +13,7 @@ test_dir = os.path.dirname(sys.modules[__name__].__file__)
 test_dir = os.path.abspath(test_dir)
 base_dir = data_dir.get_data_dir()
 default_userspace_paths = ["/usr/bin/qemu-kvm", "/usr/bin/qemu-img"]
-
+print ("JingLI log:the test_dir is %s, the base_dir is %s" % (test_dir, base_dir))
 check_modules = arch.get_kvm_module_list()
 print ("JingLi log: the check_modules is %s" % check_modules)
 online_docs_url = "https://github.com/autotest/virt-test/wiki/GetStarted"

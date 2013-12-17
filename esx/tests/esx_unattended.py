@@ -19,12 +19,15 @@
 
 import logging, time, re, os, tempfile, ConfigParser
 import threading
+import commands
 import xml.dom.minidom
+import shutil
 from autotest.client.shared import error, iso9660
 from autotest.client import utils
 from virttest import virt_vm, utils_misc, utils_disk
 from virttest import qemu_monitor, remote, syslog_server
 from virttest import http_server, data_dir, utils_net
+from esx import domain
 
 
 # Whether to print all shell commands called
@@ -149,15 +152,25 @@ class UnattendedInstallConfig(object):
         self.params = params
 
         self.attributes = ['kernel_args', 'finish_program', 'cdrom_cd1',
-                           'unattended_file', 'medium', 'url', 'kernel',
+                          'unattended_files', 'medium', 'url', 'kernel',
                            'initrd', 'nfs_server', 'nfs_dir', 'install_virtio',
                            'floppy_name', 'cdrom_unattended', 'boot_path',
                            'kernel_params', 'extra_params', 'qemu_img_binary',
                            'cdkey', 'finish_program', 'vm_type',
-                           'process_check', 'vfd_size']
+                           'process_check', 'vfd_size','local_media', 'local_image_nfs_server', 'local_image_dir']
 
+	self.attributes_demo = ['.encoding', 'config.version', 'virtualHW.version', 'displayName', 
+			   'scsi0.present', 'scsi0.virtualDev','memsize','scsi0:0.present','scsi0:0.filename', 
+			   'ide1:0.present','ide1:0.deviceType','ide1:0:filename','guestOS','virtualHW.productCompatibility', 
+			   'ethernet0.present', 'ethernet0.virtualDev','ethernet0.networkName', 
+			   'pciBridge0.present','pciBridge0.virtualDev', 'pciBridge4.present', 'pciBridge4.virtualDev',
+			   'pciBridge5.present','pciBridge5.virtualDev','pciBridge6.present','pciBridge6.virtualDev',
+			   'pciBridge7.present','pciBridge7.virtualDev' ]
         for a in self.attributes:
             setattr(self, a, params.get(a, ''))
+
+	for b in self.attributes_demo:
+	    setattr(self, b, params.get(b, ''))
 
         if self.install_virtio == 'yes':
             v_attributes = ['virtio_floppy', 'virtio_storage_path',
@@ -167,26 +180,25 @@ class UnattendedInstallConfig(object):
                 setattr(self, va, params.get(va, ''))
 
         self.tmpdir = test.tmpdir
-
-        if getattr(self, 'unattended_file'):
-            self.unattended_file = os.path.join(test.virtdir,
-                                                self.unattended_file)
-
+        if getattr(self, 'unattended_files'):
+            self.unattended_files = os.path.join(test.virtdir,
+                                                self.unattended_files)
         if getattr(self, 'finish_program'):
             self.finish_program = os.path.join(test.virtdir,
                                                self.finish_program)
 
-        if getattr(self, 'qemu_img_binary'):
-            if not os.path.isfile(getattr(self, 'qemu_img_binary')):
-                qemu_img_base_dir = os.path.join(data_dir.get_root_dir(),
-                                                 self.params.get("vm_type"))
-                self.qemu_img_binary = os.path.join(qemu_img_base_dir,
-                                                    self.qemu_img_binary)
+#        if getattr(self, 'qemu_img_binary'):
+#            if not os.path.isfile(getattr(self, 'qemu_img_binary')):
+#                qemu_img_base_dir = os.path.join(data_dir.get_root_dir(),
+#                                                 self.params.get("vm_type"))
+#                self.qemu_img_binary = os.path.join(qemu_img_base_dir,
 
-        if getattr(self, 'cdrom_cd1'):
-            self.cdrom_cd1 = os.path.join(root_dir, self.cdrom_cd1)
-        self.cdrom_cd1_mount = tempfile.mkdtemp(prefix='cdrom_cd1_',
-                                                dir=self.tmpdir)
+#        if getattr(self, 'cdrom_cd1'):
+#            self.cdrom_cd1 = os.path.join(root_dir, self.cdrom_cd1)
+#            self.cdrom_cd1_mount = tempfile.mkdtemp(prefix='cdrom_cd1_',
+#                                                dir=self.tmpdir)
+	self.floppy_mount = tempfile.mkdtemp(prefix='floppy_mount_',
+						dir=self.tmpdir)
         if getattr(self, 'cdrom_unattended'):
             self.cdrom_unattended = os.path.join(root_dir,
                                                  self.cdrom_unattended)
@@ -195,10 +207,10 @@ class UnattendedInstallConfig(object):
         if getattr(self, 'initrd'):
             self.initrd = os.path.join(root_dir, self.initrd)
 
-        if self.medium == 'nfs':
-            self.nfs_mount = tempfile.mkdtemp(prefix='nfs_',
-                                              dir=self.tmpdir)
-
+#        if self.medium == 'nfs':
+#            self.nfs_mount = tempfile.mkdtemp(prefix='nfs_',
+#                                              dir=self.tmpdir)
+#       generate ks.flp path
         setattr(self, 'floppy', self.floppy_name)
         if getattr(self, 'floppy'):
             self.floppy = os.path.join(root_dir, self.floppy)
@@ -206,29 +218,81 @@ class UnattendedInstallConfig(object):
                 os.makedirs(os.path.dirname(self.floppy))
 
         self.image_path = os.path.dirname(self.kernel)
-
         # Content server params
         # lookup host ip address for first nic by interface name
-        try:
-            auto_ip = utils_net.get_ip_address_by_interface(vm.virtnet[0].netdst)
-        except utils_net.NetError:
-            auto_ip = None
+     #   try:
+     #       auto_ip = utils_net.get_ip_address_by_interface(vm.virtnet[0].netdst)
+     #   except utils_net.NetError:
+     #       auto_ip = None
 
-        self.url_auto_content_ip = params.get('url_auto_ip', auto_ip)
-        self.url_auto_content_port = None
+     #   self.url_auto_content_ip = params.get('url_auto_ip', auto_ip)
+     #   self.url_auto_content_port = None
 
         # Kickstart server params
         # use the same IP as url_auto_content_ip, but a different port
-        self.unattended_server_port = None
+    #    self.unattended_server_port = None
 
         # Embedded Syslog Server
-        self.syslog_server_enabled = params.get('syslog_server_enabled', 'no')
-        self.syslog_server_ip = params.get('syslog_server_ip', auto_ip)
-        self.syslog_server_port = int(params.get('syslog_server_port', 5140))
-        self.syslog_server_tcp = params.get('syslog_server_proto',
-                                            'tcp') == 'tcp'
+    #    self.syslog_server_enabled = params.get('syslog_server_enabled', 'no')
+    #    self.syslog_server_ip = params.get('syslog_server_ip', auto_ip)
+    #    self.syslog_server_port = int(params.get('syslog_server_port', 5140))
+    #    self.syslog_server_tcp = params.get('syslog_server_proto',
+    #                                        'tcp') == 'tcp'
+    #    self.vm = vm
+    def mount_nfs(self, src, mount_dest_dir):
+	self.mnt_cmd = "mount %s %s -o ro" % (src, mount_dest_dir)
+	if os.system("mount | grep %s" %  src):
+		logging.debug("the nfs don't be mount, going  .......")
+      		s, o = commands.getstatusoutput(self.mnt_cmd)
+		if s != 0:
+			logging.error("Fail to mount nfs")
+	else:
+		logging.debug("ISO nfs have already mounted")
+    def create_ks_floppy(self):
+	logging.info("create the ks floppy")
+	if not self.unattended_files:
+		raise ValueError("the ks file undefined")
+	if not self.floppy:
+		raise ValueError("couldn't found the floppy file")
+	if os.path.exists(self.floppy):
+		os.remove(self.floppy)
+	c_cmd = 'dd if=/dev/zero of="%s" bs=1K count=1440' % self.floppy
+	if os.system(c_cmd):
+		raise ValueError("could not create the image floppy")
+	f_cmd = 'mkfs.msdos -s 1 "%s"' % self.floppy
+        if os.system(f_cmd):
+            raise ValueError('Error formatting floppy image.')
 
-        self.vm = vm
+        m_cmd = 'mount -o loop "%s" "%s"' % (self.floppy, self.floppy_mount)
+        if os.system(m_cmd):
+            raise ValueError('Could not mount floppy image.')
+
+	unattended_file_list = self.unattended_files.split(",")
+        for f in unattended_file_list:
+            f = f.strip()
+            src  = f.startswith("unattended/") and f or os.path.join("unattended", f)
+            if not os.path.isfile(src):
+                raise SetupError('some of unattended files does not exist.')
+            if f.endswith('.sif'):
+                dest_fname = 'winnt.sif'
+            elif f.endswith('.cfg'):
+                dest_fname = 'ks.cfg'
+            elif f.endswith('.xml'):
+                dest_fname = 'autounattend.xml'
+            else:
+                dest_fname = os.path.basename(f)
+            dest = os.path.join(self.floppy_mount, dest_fname)
+            shutil.copyfile(src, dest)
+
+        u_cmd = 'umount "%s"' % self.floppy_mount
+        if os.system(u_cmd):
+            raise SetupError('Could not unmount floppy at %s.' %
+                             self.floppy_mount)
+
+        os.chmod(self.floppy, 0755)
+
+        logging.info("Boot floppy created successfuly")
+
 
 
     def answer_kickstart(self, answer_path):
@@ -444,7 +508,8 @@ class UnattendedInstallConfig(object):
 
 
     def setup_unattended_http_server(self):
-        '''
+	'''
+     
         Setup a builtin http server for serving the kickstart file
 
         Does nothing if unattended file is not a kickstart file
@@ -648,11 +713,16 @@ class UnattendedInstallConfig(object):
         if DEBUG:
             utils_misc.display_attributes(self)
 
-        if self.syslog_server_enabled == 'yes':
-            start_syslog_server_thread(self.syslog_server_ip,
-                                       self.syslog_server_port,
-                                       self.syslog_server_tcp)
+    #    if self.syslog_server_enabled == 'yes':
+    #        start_syslog_server_thread(self.syslog_server_ip,
+    #                                   self.syslog_server_port,
+    #                                   self.syslog_server_tcp)
 
+	if self.local_media == 'nfs':
+	    self.mount_nfs(self.local_image_nfs_server, self.local_image_dir)
+	
+	if self.params.get('unattended_delivery_method') == 'floppy':
+	    self.create_ks_floppy()
         #if self.medium in ["cdrom", "kernel_initrd"]:
         #    if self.kernel and self.initrd:
         #        self.setup_cdrom()
@@ -673,6 +743,8 @@ class UnattendedInstallConfig(object):
         # Update params dictionary as some of the values could be updated
         for a in self.attributes:
             self.params[a] =  getattr(self, a)
+	for b in self.attributes_demo:
+	    self.params[b] = getattr(self, b)
 
 
 def start_syslog_server_thread(address, port, tcp):
@@ -738,10 +810,29 @@ def run_esx_unattended(test, params, env):
     esx_unattended_config = UnattendedInstallConfig(test, params, vm)
     esx_unattended_config.setup()
 
+
+
+    vm = domain.ESXdomain(params["displayName"], params)
+    vm.create()
+
+    while True:
+    	status = vm.get_vm_status()
+    	logging.info("the status is %s", status)
+    	if status == "POWERED ON":
+		logging.info("the vm is power on")
+	elif status == "RESETTING":
+		loging.info("the vm is power off")
+		break
+	elif status == "POWERING ON'":
+		break
+	else:
+		break
+
+    
+'''
     # params passed explicitly, because they may have been updated by
     # unattended install config code, such as when params['url'] == auto
     #vm.create(params=params)
-
     ########
     # ESX installation
     # TODO, to set "PasswordAuthentication yes" in /etc/ssh/sshd_config on ESX host
@@ -750,7 +841,7 @@ def run_esx_unattended(test, params, env):
     local_ip = params.get("local_ip", "none")
     remote_ip = params.get("remote_esx", "none")
     remote_passwd = params.get("remote_passwd", "123qweP")
-    cdrom_cd1 = params.get("cdrom_cd1", "isos/linux/RHEL-6.4-x86_64-DVD.iso")
+    cdrom_cd1 = params.get("cdrom_cd1", "isos/linux/RHEL-6.4-x86_64.iso")
     floppy_name = params.get("floppy_name", "images/rhel-6.4-x86_64/esx_unattended.flp")
     nfs_name = "virt-test-nfs"
     # 1) To mount data (/var/lib/virt_test) onto ESX host
@@ -773,13 +864,13 @@ def run_esx_unattended(test, params, env):
         status, output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
         logging.info("Status:%s", status)
         logging.info("Output:\n%s", output)
-    elif l_output.find("unavailable") != -1:
-        #Remove the guest from ESX host if exists
-        remote_cmd = "vnum=`vim-cmd vmsvc/getallvms | grep %s | awk '{print $1}'`; vim-cmd vmsvc/unregister $vnum" % (guest_name)
-        logging.info("Check guest %s exists or not on remote host %s.", guest_name, remote_ip)
-        vm_status, vm_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
-        logging.info("Status:%s", vm_status)
-        logging.info("Output:\n%s", vm_output)
+#    elif l_output.find("unavailable") != -1:
+#        #Remove the guest from ESX host if exists
+#        remote_cmd = "vnum=`vim-cmd vmsvc/getallvms | grep %s | awk '{print $1}'`; vim-cmd vmsvc/unregister $vnum" % (guest_name)
+#        logging.info("Check guest %s exists or not on remote host %s.", guest_name, remote_ip)
+#        vm_status, vm_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
+#        logging.info("Status:%s", vm_status)
+#        logging.info("Output:\n%s", vm_output)
 
     # 2) Create esx guest work directory
         remote_dir = "/vmfs/volumes/datastore1*/"
@@ -789,43 +880,44 @@ def run_esx_unattended(test, params, env):
         dir_status, dir_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
         logging.info("Status:%s", dir_status)
         logging.info("Output:\n%s", dir_output)
-        if not dir_status:
+        #if not dir_status:
     # 3) To create esx guest disk remotely
-            guest_dir = "%s/%s" % (remote_dir, guest_name)
-            remote_cmd = "cd %s; vmkfstools -c 15G -a pvscsi `pwd -P`/%s.vmdk" % (guest_dir, guest_name)
-            logging.info("To create esx guest disk remotely on remote host %s.", remote_ip)
-            disk_status, disk_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
-            logging.info("Status:%s", disk_status)
-            logging.info("Output:\n%s", disk_output)
+        guest_dir = "%s/%s" % (remote_dir, guest_name)
+        remote_cmd = "cd %s; vmkfstools -c 15G -a pvscsi `pwd -P`/%s.vmdk" % (guest_dir, guest_name)
+        logging.info("To create esx guest disk remotely on remote host %s.", remote_ip)
+        disk_status, disk_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
+        logging.info("Status:%s", disk_status)
+        logging.info("Output:\n%s", disk_output)
     # 4) Copy guest vmx file to guest directory
-            remote_cmd = "cd %s; cp ../../%s/%s.vmx ." % (guest_dir, nfs_name, guest_name)
-            logging.info("Copy %s.vmx to ESX guest directory: %s", guest_name, guest_dir)
-            cp_status, cp_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
-            logging.info("Status:%s", cp_status)
-            logging.info("Output:\n%s", cp_output)
+        remote_cmd = "cd %s; cp ../../%s/%s.vmx ." % (guest_dir, nfs_name, guest_name)
+        logging.info("Copy %s.vmx to ESX guest directory: %s", guest_name, guest_dir)
+        cp_status, cp_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
+        logging.info("Status:%s", cp_status)
+        logging.info("Output:\n%s", cp_output)
     # 5) To prepare for the iso and floppy images
-            iso_name = cdrom_cd1.rsplit('/', 1)[1]
-            flp_name = floppy_name.rsplit('/', 1)[1]
+        iso_name = cdrom_cd1.rsplit('/', 1)[1]
+        flp_name = floppy_name.rsplit('/', 1)[1]
             # /nfs-9-84/esx_virtest_auto/shared/data/isos/linux/RHEL-6.4-x86_64-DVD.iso
-            remote_cmd = "cd %s; ln -s ../../%s/isos/linux/%s %s; ln -s ../../%s/%s %s" % (guest_dir, nfs_name, iso_name, iso_name, 
+        remote_cmd = "cd %s; ln -s ../../%s/isos/linux/%s %s; ln -s ../../%s/%s %s" % (guest_dir, nfs_name, iso_name, iso_name, 
                                                                                 nfs_name, floppy_name, flp_name)
-            logging.info("Prepare iso and floppy images: %s, %s", iso_name, flp_name)
-            ln_status, ln_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
-            logging.info("Status:%s", ln_status)
-            logging.info("Output:\n%s", ln_output)
+        logging.info("Prepare iso and floppy images: %s, %s", iso_name, flp_name)
+        ln_status, ln_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
+        logging.info("Status:%s", ln_status)
+        logging.info("Output:\n%s", ln_output)
     # 6) Start the vm
-            remote_cmd = "cd %s; vnum=`vim-cmd solo/registervm %s/%s.vmx`; vim-cmd vmsvc/power.on $vnum" % (guest_dir, guest_dir, guest_name)
-            logging.info("Power on guest %s remotely on remote host %s.", guest_name, remote_ip)
-            power_on_status, power_on_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
-            logging.info("Status:%s", power_on_status)
-            logging.info("Output:\n%s", power_on_output)
-        else:
-            logging.error("Failed to create ESX guest working directory:\n%s", remote_dir)
-    else:
-        logging.error("Failed to mount data (/var/lib/virt_test) onto ESX host %s.", remote_ip)
+        remote_cmd = "cd %s; vnum=`vim-cmd solo/registervm %s/%s.vmx`; vim-cmd vmsvc/power.on $vnum" % (guest_dir, guest_dir, guest_name)
+        logging.info("Power on guest %s remotely on remote host %s.", guest_name, remote_ip)
+        power_on_status, power_on_output = remote_ssh(remote_cmd, remote_ip, remote_passwd)
+        logging.info("Status:%s", power_on_status)
+        logging.info("Output:\n%s", power_on_output)
+#        else:
+#            logging.error("Failed to create ESX guest working directory:\n%s", remote_dir)
+#    else:
+#        logging.error("Failed to mount data (/var/lib/virt_test) onto ESX host %s.", remote_ip)
 
         ########
-
+'''
+'''
     post_finish_str = params.get("post_finish_str",
                                  "Post set up finished")
     install_timeout = int(params.get("timeout", 3000))
@@ -901,3 +993,4 @@ def run_esx_unattended(test, params, env):
         except qemu_monitor.MonitorError, e:
             logging.warning("Guest apparently shut down, but got a "
                             "monitor error: %s", e)
+'''
